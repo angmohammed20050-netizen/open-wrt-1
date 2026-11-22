@@ -1,0 +1,100 @@
+{
+	"luci-app-quick": {
+		"description": "Grant access to Quick Pro tools and theme control",
+		"read": {
+			"uci": [
+				"wireless",
+				"network",
+				"dhcp",
+				"firewall",
+				"quick",
+				"dropbear",
+				"openvpn",
+				"system",
+				"lldpd"
+			],
+			"file": {
+				"/usr/libexec/quick-ctl": [
+					"exec"
+				],
+				"/usr/bin/wg": [
+					"read"
+				],
+				"/etc/config/openvpn": [
+					"read"
+				],
+				"/etc/openvpn/quick.ovpn": [
+					"read"
+				],
+				"/www/luci-static/quick/bg": [
+					"list"
+				],
+				"/www/luci-static/quick/bg/*": [
+					"read"
+				],
+				"/proc/stat": [
+					"read"
+				],
+				"/proc/net/dev": [
+					"read"
+				],
+				"/proc/sys/net/netfilter/nf_conntrack_count": [
+					"read"
+				],
+				"/proc/sys/net/netfilter/nf_conntrack_max": [
+					"read"
+				],
+				"/sys/class/thermal/thermal_zone0/temp": [
+					"read"
+				]
+			},
+			"ubus": {
+				"iwinfo": [
+					"scan",
+					"info",
+					"devices",
+					"freqlist",
+					"assoclist",
+					"txpowerlist",
+					"countrylist"
+				],
+				"network.wireless": [
+					"status"
+				],
+				"network.interface": [
+					"dump"
+				],
+				"system": [
+					"info",
+					"board"
+				],
+				"luci-rpc": [
+					"getNetworkDevices",
+					"getDHCPLeases",
+					"getHostHints"
+				]
+			}
+		},
+		"write": {
+			"uci": [
+				"wireless",
+				"network",
+				"dhcp",
+				"firewall",
+				"quick",
+				"dropbear",
+				"openvpn",
+				"system",
+				"lldpd"
+			],
+			"file": {
+				"/etc/openvpn/quick.ovpn": [
+					"write"
+				],
+				"/www/luci-static/quick/bg/*": [
+					"write"
+				]
+			}
+		}
+	}
+}

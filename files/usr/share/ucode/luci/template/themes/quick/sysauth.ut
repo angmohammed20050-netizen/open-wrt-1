@@ -1,0 +1,179 @@
+{#
+ Quick Royal theme - luxury login page
+ Form fields/handling follow luci-theme-bootstrap sysauth.ut (Apache License 2.0)
+-#}
+
+{%
+	import { readfile } from 'fs';
+%}
+{% include('header', { blank_page: true }) %}
+
+{%
+	const bi = ubus.call('system', 'board') ?? {};
+	const hostname = striptags(bi.hostname ?? 'OpenWrt');
+	const model = striptags(bi.model ?? '');
+	const release = striptags(bi.release?.description ?? '');
+
+	/* خلفية صفحة الدخول (صورة أو فيديو) من theme.json */
+	let tj = {};
+	try { tj = json(readfile('/www/luci-static/quick/theme.json')) ?? {}; } catch (e) { tj = {}; }
+	let lbg = (type(tj.login_bg) == 'string' && match(tj.login_bg, /^(\/luci-static\/|https?:\/\/)[A-Za-z0-9_\/.:%?&=+~@!,;-]+$/)) ? tj.login_bg : '';
+	let ltype = (lbg && (tj.login_bg_type == 'image' || tj.login_bg_type == 'video')) ? tj.login_bg_type : '';
+	let ldim = (+tj.login_dim >= 0 && +tj.login_dim <= 90) ? +tj.login_dim : 45;
+%}
+
+<div class="qs-stage{% if (ltype): %} has-media{% endif %}" style="--qs-dim: {{ ldim }}">
+	{% if (ltype == 'video'): %}
+	<video class="qs-media" src="{{ entityencode(lbg, true) }}" autoplay muted loop playsinline preload="auto" disablepictureinpicture></video>
+	{% elif (ltype == 'image'): %}
+	<div class="qs-media" style="background-image:url('{{ entityencode(lbg, true) }}')"></div>
+	{% endif %}
+	<div class="qs-aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+	<div class="qs-gridfx" aria-hidden="true"></div>
+	<div class="qs-stars" aria-hidden="true"></div>
+
+	<main class="qs-card{% if (fuser && !auth_message): %} qs-shake{% endif %}">
+		<section class="qs-hero">
+			<div class="qs-hero-top">
+				<img src="{{ media }}/logo.svg" alt="" width="44" height="44">
+				<span>QUICK <em>ROYAL</em></span>
+			</div>
+
+			<div class="qs-orbit" aria-hidden="true">
+				<div class="qs-ring r1"></div>
+				<div class="qs-ring r2"></div>
+				<div class="qs-ring r3"></div>
+				<div class="qs-core">
+					<svg viewBox="0 0 24 24" width="46" height="46" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z"/></svg>
+				</div>
+				<span class="qs-sat s1"></span><span class="qs-sat s2"></span><span class="qs-sat s3"></span>
+			</div>
+
+			<div class="qs-hero-txt">
+				<h1>{{ hostname }}</h1>
+				{% if (model): %}<p class="qs-model">{{ model }}</p>{% endif %}
+				<p class="qs-tag">أهلاً بك &middot; Welcome back</p>
+			</div>
+
+			<ul class="qs-chips">
+				<li><svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.5-3 8.2-7 10-4-1.8-7-5.5-7-10V6l7-3z"/><path d="M9.5 12l2 2 3.5-4"/></svg>Secure</li>
+				<li><svg viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z"/></svg>Fast</li>
+				<li><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.2 3 14.8 0 18M12 3c-3 3.2-3 14.8 0 18"/></svg>Smart</li>
+			</ul>
+		</section>
+
+		<section class="qs-form-side">
+			<form method="post" id="qs-login" autocomplete="on">
+				<div class="qs-form-head">
+					<h2>{{ _('Authorization Required') }}</h2>
+					<p>{{ _('Please enter your username and password.') }}</p>
+				</div>
+
+				{% if (auth_message): %}
+				<div class="qs-alert{% if (auth_plugin): %} warn{% endif %}" role="alert">{{ auth_message }}</div>
+				{% elif (fuser): %}
+				<div class="qs-alert" role="alert">{{ _('Invalid username and/or password! Please try again.') }}</div>
+				{% endif %}
+
+				<label class="qs-field" for="luci_username">
+					<span class="qs-lbl">{{ _('Username') }}</span>
+					<span class="qs-input">
+						<svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5"/></svg>
+						<input name="luci_username" id="luci_username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" value="{{ entityencode(duser, true) }}" placeholder="root">
+					</span>
+				</label>
+
+				<label class="qs-field" for="luci_password">
+					<span class="qs-lbl">{{ _('Password') }}</span>
+					<span class="qs-input">
+						<svg viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="11" rx="3"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+						<input name="luci_password" id="luci_password" type="password" autocomplete="current-password" placeholder="••••••••">
+						<button type="button" class="qs-eye" id="qs-eye" aria-label="Show password" tabindex="-1">
+							<svg class="on" viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
+							<svg class="off" viewBox="0 0 24 24"><path d="M3 3l18 18M10.6 6.2A9.6 9.6 0 0 1 12 6c6.4 0 10 6 10 6a17 17 0 0 1-3.2 3.9M6.5 7.6A17 17 0 0 0 2 12s3.6 7 10 7a9.7 9.7 0 0 0 4-.9"/></svg>
+						</button>
+					</span>
+				</label>
+
+				{% if (auth_fields): %}
+					{% for (let field in auth_fields): %}
+					<label class="qs-field" for="{{ field.name }}">
+						<span class="qs-lbl">{{ _(field.label ?? field.name) }}</span>
+						<span class="qs-input">
+							<input
+								name="{{ field.name }}"
+								id="{{ field.name }}"
+								type="{{ field.type ?? 'text' }}"
+								{% if (field.placeholder): %}placeholder="{{ field.placeholder }}"{% endif %}
+								{% if (field.inputmode): %}inputmode="{{ field.inputmode }}"{% endif %}
+								{% if (field.pattern): %}pattern="{{ field.pattern }}"{% endif %}
+								{% if (field.maxlength): %}maxlength="{{ field.maxlength }}"{% endif %}
+								{% if (field.autocomplete): %}autocomplete="{{ field.autocomplete }}"{% endif %}
+								{% if (field.required): %}required{% endif %}
+							>
+						</span>
+					</label>
+					{% endfor %}
+				{% endif %}
+
+				{% if (auth_html): %}
+					<div class="qs-extra">{{ auth_html }}</div>
+				{% endif %}
+				{% if (auth_assets): %}
+					{% for (let asset in auth_assets): %}
+						{% if (asset.type == 'script'): %}
+							<script src="{{ asset.src }}"></script>
+						{% endif %}
+					{% endfor %}
+				{% endif %}
+
+				<button type="submit" class="qs-submit" id="qs-submit">
+					<span class="qs-submit-txt">{{ _('Log in') }}</span>
+					<svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+					<i class="qs-spin"></i>
+				</button>
+			</form>
+
+			<div class="qs-login-foot">
+				<span>{{ release || (version.distname + ' ' + version.distversion) }}</span>
+				<span>{{ version.luciname }}</span>
+			</div>
+		</section>
+	</main>
+</div>
+
+<script>
+	(function () {
+		var form = document.getElementById('qs-login');
+		var pw = document.getElementById('luci_password');
+		var us = document.getElementById('luci_username');
+		var eye = document.getElementById('qs-eye');
+		var btn = document.getElementById('qs-submit');
+
+		eye.addEventListener('click', function () {
+			var show = pw.type === 'password';
+			pw.type = show ? 'text' : 'password';
+			eye.classList.toggle('shown', show);
+			pw.focus();
+		});
+
+		form.addEventListener('submit', function () {
+			btn.classList.add('busy');
+			btn.setAttribute('aria-busy', 'true');
+		});
+
+		(us.value ? pw : us).focus();
+
+		/* subtle parallax on the hero orbit */
+		var orbit = document.querySelector('.qs-orbit');
+		if (orbit && window.matchMedia('(pointer:fine)').matches) {
+			document.addEventListener('mousemove', function (e) {
+				var x = (e.clientX / window.innerWidth - .5) * 14;
+				var y = (e.clientY / window.innerHeight - .5) * 14;
+				orbit.style.transform = 'translate(' + x + 'px,' + y + 'px)';
+			});
+		}
+	})();
+</script>
+
+{% include('footer', { blank_page: true }) %}

@@ -1,0 +1,163 @@
+{
+	"admin/quick": {
+		"title": "الأدوات السريعة",
+		"order": 5,
+		"action": {
+			"type": "firstchild"
+		},
+		"depends": {
+			"acl": [
+				"luci-app-quick"
+			]
+		}
+	},
+	"admin/quick/dashboard": {
+		"title": "لوحة المعلومات",
+		"order": 0,
+		"action": {
+			"type": "view",
+			"path": "quick/dashboard"
+		}
+	},
+	"admin/quick/settings": {
+		"title": "الإعدادات السريعة",
+		"order": 1,
+		"action": {
+			"type": "view",
+			"path": "quick/settings"
+		}
+	},
+	"admin/quick/loop": {
+		"title": "حماية من اللوب",
+		"order": 2,
+		"action": {
+			"type": "view",
+			"path": "quick/loop"
+		}
+	},
+	"admin/quick/noise": {
+		"title": "معالج التشويش",
+		"order": 3,
+		"action": {
+			"type": "view",
+			"path": "quick/noise"
+		}
+	},
+	"admin/quick/portfwd": {
+		"title": "إدارة توجيه المنافذ",
+		"order": 4,
+		"action": {
+			"type": "view",
+			"path": "quick/portfwd"
+		}
+	},
+	"admin/quick/password": {
+		"title": "تعيين كلمة المرور",
+		"order": 5,
+		"action": {
+			"type": "view",
+			"path": "quick/password"
+		}
+	},
+	"admin/quick/resetbtn": {
+		"title": "إعدادات زر الفورمات",
+		"order": 6,
+		"action": {
+			"type": "view",
+			"path": "quick/resetbtn"
+		}
+	},
+	"admin/quick/reboot": {
+		"title": "توقيت إعادة التشغيل",
+		"order": 7,
+		"action": {
+			"type": "view",
+			"path": "quick/reboot"
+		}
+	},
+	"admin/quick/wifisched": {
+		"title": "جدول تشغيل WiFi",
+		"order": 8,
+		"action": {
+			"type": "view",
+			"path": "quick/wifisched"
+		}
+	},
+	"admin/quick/time": {
+		"title": "ضبط الوقت والتاريخ",
+		"order": 9,
+		"action": {
+			"type": "view",
+			"path": "quick/time"
+		}
+	},
+	"admin/quick/channels": {
+		"title": "تحليل القنوات",
+		"order": 10,
+		"action": {
+			"type": "view",
+			"path": "quick/channels"
+		}
+	},
+	"admin/quick/usage": {
+		"title": "عداد استهلاك البيانات",
+		"order": 11,
+		"action": {
+			"type": "view",
+			"path": "quick/usage"
+		}
+	},
+	"admin/quick/clients": {
+		"title": "سجل المتصلين",
+		"order": 12,
+		"action": {
+			"type": "view",
+			"path": "quick/clients"
+		}
+	},
+	"admin/quick/neighbors": {
+		"title": "الظهور بالنيبورز",
+		"order": 13,
+		"action": {
+			"type": "view",
+			"path": "quick/neighbors"
+		}
+	},
+	"admin/quick/speed": {
+		"title": "قياس السرعة والحظر",
+		"order": 14,
+		"action": {
+			"type": "view",
+			"path": "quick/speed"
+		}
+	},
+	"admin/quick/vpn": {
+		"title": "VPN و DNS",
+		"order": 15,
+		"action": {
+			"type": "view",
+			"path": "quick/vpn"
+		}
+	},
+	"admin/quick/extras": {
+		"title": "مميزات إضافية وحماية السوفت",
+		"order": 16,
+		"action": {
+			"type": "view",
+			"path": "quick/extras"
+		}
+	},
+	"admin/system/quick-theme": {
+		"title": "تحكم ثيم Quick",
+		"order": 90,
+		"action": {
+			"type": "view",
+			"path": "quick/theme"
+		},
+		"depends": {
+			"acl": [
+				"luci-app-quick"
+			]
+		}
+	}
+}

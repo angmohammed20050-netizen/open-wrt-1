@@ -1,0 +1,4 @@
+/* Quick Royal theme: base = bootstrap CBI styles + royal layer */
+@import url('/luci-static/bootstrap/cascade.css');
+@import url('/luci-static/quick/quick.css');
+@import url('/luci-static/quick/quick-glass.css');

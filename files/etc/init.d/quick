@@ -1,0 +1,24 @@
+#!/bin/sh /etc/rc.common
+# يطبّق /etc/config/quick عند الإقلاع وعند أي uci commit على quick.
+
+START=99
+USE_PROCD=1
+
+start_service() {
+	/usr/libexec/quick-apply.sh all
+	if [ "$(uci -q get quick.neighbors.mndp_enable)" = "1" ] && [ -x /usr/bin/ucode ] && [ -f /usr/libexec/quick-mndp.uc ]; then
+		procd_open_instance mndp
+		procd_set_param command /usr/bin/ucode /usr/libexec/quick-mndp.uc daemon
+		procd_set_param respawn 3600 10 5
+		procd_close_instance
+	fi
+}
+
+reload_service() {
+	stop
+	start
+}
+
+service_triggers() {
+	procd_add_reload_trigger quick
+}

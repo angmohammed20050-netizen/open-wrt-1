@@ -1,0 +1,438 @@
+#!/bin/sh
+# واجهة خلفية لأقسام Quick Pro (تُستدعى من LuCI). كل الأوامر تطبع JSON.
+
+QUICK_LIBDIR="${QUICK_LIBDIR:-/usr/libexec}"
+. "$QUICK_LIBDIR/quick-lib.sh"
+quick_load
+
+LAN_IF=$(cget main lan_if br-lan)
+valid_iface "$LAN_IF" || LAN_IF=br-lan
+
+err() { printf '{"error":"%s"}\n' "$1"; exit 1; }
+have() { command -v "$1" >/dev/null 2>&1; }
+json_esc() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr -d '\r\n'; }
+
+# ------------------------------------------------------------------ ping --
+cmd_ping() {
+	local host="$1" n="${2:-4}" out tx rx loss rtt mn av mx
+	valid_host "$host" || err "invalid host"
+	is_uint "$n" || n=4
+	[ "$n" -gt 20 ] && n=20
+	[ "$n" -lt 1 ] && n=1
+	out=$(ping -c "$n" -W 2 "$host" 2>&1)
+	tx=$(printf '%s\n' "$out" | sed -n 's/^\([0-9][0-9]*\) packets transmitted.*/\1/p' | head -n1)
+	rx=$(printf '%s\n' "$out" | sed -n 's/^[0-9]* packets transmitted, \([0-9]*\).*/\1/p' | head -n1)
+	loss=$(printf '%s\n' "$out" | sed -n 's/.* \([0-9.]*\)% packet loss.*/\1/p' | head -n1)
+	rtt=$(printf '%s\n' "$out" | sed -n 's/.*= \([0-9.]*\)\/\([0-9.]*\)\/\([0-9.]*\).*/\1 \2 \3/p' | head -n1)
+	set -- $rtt
+	mn="${1:-null}"; av="${2:-null}"; mx="${3:-null}"
+	if [ -z "$tx" ]; then
+		printf '{"host":"%s","ok":false,"sent":%s,"received":0,"loss":100,"min":null,"avg":null,"max":null}\n' "$host" "$n"
+	else
+		printf '{"host":"%s","ok":%s,"sent":%s,"received":%s,"loss":%s,"min":%s,"avg":%s,"max":%s}\n' \
+			"$host" "$([ "${rx:-0}" -gt 0 ] && echo true || echo false)" "$tx" "${rx:-0}" "${loss:-100}" "$mn" "$av" "$mx"
+	fi
+}
+
+# ----------------------------------------------------------------- speed --
+cmd_speed() {
+	local url="${1:-$(cget main speed_url 'https://speed.cloudflare.com/__down?bytes=50000000')}"
+	local secs="${2:-$(cget main speed_secs 8)}" fetch t0 t1 bytes
+	case "$url" in http://*|https://*) ;; *) err "invalid url" ;; esac
+	printf '%s' "$url" | grep -q '[[:space:]]' && err "invalid url"
+	is_uint "$secs" || secs=8
+	[ "$secs" -gt 15 ] && secs=15
+	[ "$secs" -lt 2 ] && secs=2
+
+	if have uclient-fetch; then fetch=uclient-fetch; elif have wget; then fetch=wget; elif have curl; then fetch=curl; else err "no downloader (install wget or uclient-fetch)"; fi
+
+	t0=$(cut -d' ' -f1 /proc/uptime)
+	if [ "$fetch" = curl ]; then
+		bytes=$(timeout "$secs" curl -fsSL "$url" 2>/dev/null | head -c 500000000 | wc -c)
+	else
+		bytes=$(timeout "$secs" "$fetch" -q -O - "$url" 2>/dev/null | head -c 500000000 | wc -c)
+	fi
+	t1=$(cut -d' ' -f1 /proc/uptime)
+
+	awk -v b="$bytes" -v a="$t0" -v z="$t1" -v u="$url" 'BEGIN {
+		d = z - a; if (d <= 0) d = 0.01
+		gsub(/["\\]/, "", u)
+		printf "{\"bytes\":%d,\"seconds\":%.2f,\"mbps\":%.2f,\"ok\":%s,\"url\":\"%s\"}\n", b, d, b * 8 / d / 1000000, (b > 0 ? "true" : "false"), u
+	}'
+}
+
+# ---------------------------------------------------------------- clients --
+client_ips() {
+	[ -r /tmp/dhcp.leases ] && awk '{print $3}' /tmp/dhcp.leases
+	ip -4 neigh show dev "$LAN_IF" 2>/dev/null | awk '/lladdr/ {print $1}'
+}
+
+ensure_acct() {
+	have nft || return 0
+	nft list chain inet quick acct >/dev/null 2>&1 || {
+		nft add table inet quick 2>/dev/null
+		nft add chain inet quick acct '{ type filter hook forward priority -10; policy accept; }' 2>/dev/null
+	}
+	local have_rules ip
+	have_rules=$(nft list chain inet quick acct 2>/dev/null)
+	for ip in $(client_ips | sort -u); do
+		valid_ip "$ip" || continue
+		case "$have_rules" in *"ip saddr $ip "*) continue ;; esac
+		nft add rule inet quick acct ip saddr "$ip" counter 2>/dev/null
+		nft add rule inet quick acct ip daddr "$ip" counter 2>/dev/null
+	done
+}
+
+cmd_ensure() { ensure_acct; echo '{"ok":true}'; }
+
+cmd_clients() {
+	ensure_acct
+	{
+		[ -r /tmp/dhcp.leases ] && awk '{printf "L\t%s\t%s\t%s\n", $3, $2, $4}' /tmp/dhcp.leases
+		ip -4 neigh show dev "$LAN_IF" 2>/dev/null | awk '/lladdr/ { for (i = 1; i <= NF; i++) if ($i == "lladdr") printf "N\t%s\t%s\t*\n", $1, $(i + 1) }'
+		have nft && nft list chain inet quick acct 2>/dev/null | awk '
+			/ip saddr/ { for (i = 1; i <= NF; i++) { if ($i == "saddr") ip = $(i + 1); if ($i == "bytes") b = $(i + 1) } printf "U\t%s\t%s\n", ip, b }
+			/ip daddr/ { for (i = 1; i <= NF; i++) { if ($i == "daddr") ip = $(i + 1); if ($i == "bytes") b = $(i + 1) } printf "D\t%s\t%s\n", ip, b }'
+		printf '%s\n' "$DUMP" | awk -F'\t' '$1 == "limit" && $3 == "ip" {printf "X\t%s\t\n", $4}'
+	} | awk -F'\t' '
+		function clean(s) { gsub(/[^A-Za-z0-9._:@ -]/, "", s); return s }
+		$1 == "L" || $1 == "N" {
+			ip = $2
+			if (!(ip in seen)) { seen[ip] = 1; order[++n] = ip }
+			if ($1 == "L") { mac[ip] = clean($3); name[ip] = ($4 == "*" ? "" : clean($4)) }
+			else if (!(ip in mac)) mac[ip] = clean($3)
+		}
+		$1 == "U" { up[$2] = $3 }
+		$1 == "D" { dn[$2] = $3 }
+		$1 == "X" { lim[$2] = 1 }
+		END {
+			printf "{\"clients\":["
+			for (i = 1; i <= n; i++) {
+				ip = order[i]
+				printf "%s{\"ip\":\"%s\",\"mac\":\"%s\",\"name\":\"%s\",\"up\":%d,\"down\":%d,\"limited\":%s}", (i > 1 ? "," : ""), ip, mac[ip], name[ip], up[ip] + 0, dn[ip] + 0, (ip in lim ? "true" : "false")
+			}
+			printf "]}\n"
+		}'
+}
+
+cmd_usage_reset() {
+	have nft && nft flush chain inet quick acct 2>/dev/null
+	ensure_acct
+	echo '{"ok":true}'
+}
+
+# ----------------------------------------------------------- usage-ifaces --
+cmd_usage_ifaces() {
+	awk '
+		NR > 2 {
+			gsub(":", " ", $0)
+			ifname = $1
+			if (ifname == "lo") next
+			rx = $2 + 0; rxp = $3 + 0; tx = $10 + 0; txp = $11 + 0
+			printf "%s{\"iface\":\"%s\",\"rx\":%.0f,\"tx\":%.0f,\"rx_pkts\":%.0f,\"tx_pkts\":%.0f}", (n++ ? "," : ""), ifname, rx, tx, rxp, txp
+		}
+		BEGIN { printf "{\"ifaces\":[" }
+		END   { printf "]}\n" }
+	' /proc/net/dev
+}
+
+# ------------------------------------------------------------ clients-log --
+HIST_FILE="$QUICK_STATE/clients_history.tsv"
+
+cmd_clients_log() {
+	local now
+	now=$(date +%s)
+	touch "$HIST_FILE" 2>/dev/null
+
+	# Merge current DHCP + ARP + WiFi into persistent history
+	{
+		[ -r "$HIST_FILE" ] && awk -F'\t' 'NF>=5 {printf "H\t%s\t%s\t%s\t%s\t%s\n", $1,$2,$3,$4,$5}' "$HIST_FILE"
+		[ -r /tmp/dhcp.leases ] && awk '{printf "L\t%s\t%s\t%s\n", tolower($2), $3, $4}' /tmp/dhcp.leases
+		ip -4 neigh show dev "$LAN_IF" 2>/dev/null | awk '
+			/lladdr/ {
+				st = $NF
+				for (i = 1; i <= NF; i++) if ($i == "lladdr") mac = tolower($(i + 1))
+				if (mac != "") printf "N\t%s\t%s\t%s\n", mac, $1, st
+			}'
+	} | awk -F'\t' -v now="$now" -v hf="$HIST_FILE" '
+		function clean(s) { gsub(/[^A-Za-z0-9._:@ -]/, "", s); return s }
+		$1 == "H" {
+			m = tolower($2); if (m == "") next
+			if (!(m in seen)) { seen[m] = 1; order[++n] = m }
+			ip[m] = $3; name[m] = $4; first[m] = $5 + 0; last[m] = $6 + 0
+		}
+		$1 == "L" {
+			m = $2; if (m == "") next
+			if (!(m in seen)) { seen[m] = 1; order[++n] = m; first[m] = now }
+			ip[m] = $3
+			if ($4 != "*" && $4 != "") name[m] = clean($4)
+			if (last[m] < now) last[m] = now
+			active[m] = 1
+		}
+		$1 == "N" {
+			m = $2; if (m == "") next
+			if (!(m in seen)) { seen[m] = 1; order[++n] = m; first[m] = now }
+			if ($3 != "") ip[m] = $3
+			if ($4 == "REACHABLE" || $4 == "DELAY" || $4 == "PROBE") {
+				active[m] = 1; last[m] = now
+			}
+		}
+		END {
+			# Write back history (keep last 200)
+			start = (n > 200) ? n - 199 : 1
+			for (i = start; i <= n; i++) {
+				m = order[i]
+				printf "%s\t%s\t%s\t%d\t%d\n", m, ip[m], name[m], first[m], last[m] > hf
+			}
+			close(hf)
+			printf "{\"now\":%d,\"records\":[", now
+			c = 0
+			for (i = start; i <= n; i++) {
+				m = order[i]
+				printf "%s{\"mac\":\"%s\",\"ip\":\"%s\",\"name\":\"%s\",\"first\":%d,\"last\":%d,\"online\":%s}",
+					(c++ ? "," : ""), m, ip[m], name[m], first[m], last[m], (active[m] ? "true" : "false")
+			}
+			printf "]}\n"
+		}'
+}
+
+cmd_clients_log_clear() {
+	: > "$HIST_FILE" 2>/dev/null
+	echo '{"ok":true}'
+}
+
+# ----------------------------------------------------------- txpower-set --
+cmd_txpower_set() {
+	local radio="$1" val="$2"
+	printf '%s' "$radio" | grep -Eq '^[A-Za-z0-9_]+$' || err "invalid radio"
+	if [ "$val" = "auto" ] || [ -z "$val" ]; then
+		uci -q delete "wireless.${radio}.txpower"
+	else
+		is_uint "$val" || err "invalid txpower"
+		[ "$val" -ge 1 ] && [ "$val" -le 30 ] || err "txpower out of range (1-30)"
+		uci -q set "wireless.${radio}.txpower=${val}"
+	fi
+	uci commit wireless 2>/dev/null
+	wifi reload "$radio" >/dev/null 2>&1 || wifi reload >/dev/null 2>&1
+	sleep 2
+	printf '{"ok":true,"radio":"%s","selected":"%s"}\n' "$radio" "${val:-auto}"
+}
+
+# ------------------------------------------------------------ loop-status --
+cmd_loop_status() {
+	local stp="0" drops="0" ports=""
+	stp=$(cat "/sys/class/net/$LAN_IF/bridge/stp_state" 2>/dev/null); stp=${stp:-0}
+	if have nft; then
+		drops=$(nft list chain inet quick loopguard 2>/dev/null | awk '/drop/ { for(i=1;i<=NF;i++) if($i=="packets") s+=$(i+1) } END { print s+0 }')
+	fi
+	printf '{"bridge":"%s","stp_state":%s,"storm_drops":%s,"ports":[' "$LAN_IF" "${stp:-0}" "${drops:-0}"
+	local first=1 p st pstate
+	for p in /sys/class/net/"$LAN_IF"/brif/*; do
+		[ -e "$p" ] || continue
+		local pn=$(basename "$p")
+		st=$(cat "$p/state" 2>/dev/null); st=${st:-0}
+		case "$st" in
+			0) pstate="disabled" ;;
+			1) pstate="listening" ;;
+			2) pstate="learning" ;;
+			3) pstate="forwarding" ;;
+			4) pstate="blocking" ;;
+			*) pstate="unknown" ;;
+		esac
+		local oper=$(cat "/sys/class/net/$pn/operstate" 2>/dev/null)
+		[ "$first" = 1 ] && first=0 || printf ','
+		printf '{"port":"%s","stp":"%s","oper":"%s"}' "$pn" "$pstate" "${oper:-unknown}"
+	done
+	printf ']}\n'
+}
+
+# ----------------------------------------------------------------- passwd --
+cmd_passwd() {
+	local b64="$1" pw
+	[ -n "$b64" ] || err "empty password"
+	if have base64; then
+		pw=$(printf '%s' "$b64" | base64 -d 2>/dev/null)
+	elif have openssl; then
+		pw=$(printf '%s' "$b64" | openssl base64 -d 2>/dev/null)
+	else
+		pw="$b64"
+	fi
+	[ -n "$pw" ] || err "invalid password"
+	printf '%s\n%s\n' "$pw" "$pw" | passwd root >/dev/null 2>&1 || err "passwd failed"
+	echo '{"ok":true}'
+}
+
+# --------------------------------------------------------- resetbtn-status --
+cmd_resetbtn_status() {
+	local mode=$(cget resetbtn mode normal)
+	local hold=$(cget resetbtn hold_secs 5)
+	local has_orig="false"
+	[ -f /etc/rc.button/reset.orig ] && has_orig="true"
+	printf '{"mode":"%s","hold_secs":%s,"backup_exists":%s}\n' "$mode" "${hold:-5}" "$has_orig"
+}
+
+# ------------------------------------------------------------- reboot-now --
+cmd_reboot_now() {
+	( sleep 2; sync; reboot ) >/dev/null 2>&1 &
+	echo '{"ok":true}'
+}
+
+# ------------------------------------------------------------ wifi-toggle --
+cmd_wifi_toggle() {
+	local act="$1" radio="$2" r
+	case "$act" in on|off) ;; *) err "invalid action" ;; esac
+	local dis=0
+	[ "$act" = "off" ] && dis=1
+	if [ -n "$radio" ] && [ "$radio" != "all" ]; then
+		printf '%s' "$radio" | grep -Eq '^[A-Za-z0-9_]+$' || err "invalid radio"
+		uci -q set "wireless.${radio}.disabled=${dis}"
+	else
+		for r in $(uci show wireless 2>/dev/null | sed -n 's/^wireless\.\([^.=]*\)=wifi-device$/\1/p'); do
+			uci -q set "wireless.${r}.disabled=${dis}"
+		done
+	fi
+	uci commit wireless 2>/dev/null
+	wifi reload >/dev/null 2>&1
+	printf '{"ok":true,"state":"%s","target":"%s"}\n' "$act" "${radio:-all}"
+}
+
+# -------------------------------------------------------------- time-info --
+cmd_time_info() {
+	local epoch iso tz ntp_en
+	epoch=$(date +%s)
+	iso=$(date '+%Y-%m-%d %H:%M:%S')
+	tz=$(uci -q get system.@system[0].zonename)
+	[ -z "$tz" ] && tz=$(uci -q get system.@system[0].timezone)
+	ntp_en=$(uci -q get system.ntp.enabled)
+	printf '{"epoch":%s,"formatted":"%s","timezone":"%s","ntp_enabled":%s}\n' \
+		"$epoch" "$(json_esc "$iso")" "$(json_esc "${tz:-UTC}")" "$([ "${ntp_en:-1}" = "1" ] && echo true || echo false)"
+}
+
+cmd_set_time() {
+	local epoch="$1"
+	is_uint "$epoch" || err "invalid timestamp"
+	date -s "@$epoch" >/dev/null 2>&1 || err "failed to set date"
+	cmd_time_info
+}
+
+cmd_ntp_sync() {
+	local srv
+	srv=$(uci -q get system.ntp.server | awk '{print $1}')
+	[ -z "$srv" ] && srv="0.openwrt.pool.ntp.org"
+	if have ntpd; then
+		timeout 10 ntpd -n -q -p "$srv" >/dev/null 2>&1
+	fi
+	cmd_time_info
+}
+
+# ------------------------------------------------------- neighbors-status --
+cmd_neighbors_status() {
+	local mndp_run="false" lldp_inst="false" lldp_run="false"
+	pgrep -f quick-mndp.uc >/dev/null 2>&1 && mndp_run="true"
+	have lldpd && lldp_inst="true"
+	pgrep lldpd >/dev/null 2>&1 && lldp_run="true"
+	local ident=$(cget neighbors identity 'ZTE-E8822-Quick')
+	local plat=$(cget neighbors platform 'ZTE E8822')
+	local iface=$(cget neighbors iface 'br-lan')
+	local ip=$(ip -4 -o addr show dev "$iface" 2>/dev/null | awk '{print $4}' | head -n1)
+	local mac=$(cat "/sys/class/net/$iface/address" 2>/dev/null)
+	printf '{"mndp_running":%s,"lldp_installed":%s,"lldp_running":%s,"identity":"%s","platform":"%s","iface":"%s","ip":"%s","mac":"%s"}\n' \
+		"$mndp_run" "$lldp_inst" "$lldp_run" "$(json_esc "$ident")" "$(json_esc "$plat")" "$(json_esc "$iface")" "$(json_esc "$ip")" "$(json_esc "$mac")"
+}
+
+cmd_neighbors_send() {
+	if [ -x /usr/bin/ucode ] && [ -f /usr/libexec/quick-mndp.uc ]; then
+		/usr/bin/ucode /usr/libexec/quick-mndp.uc once >/dev/null 2>&1
+		echo '{"ok":true}'
+	else
+		err "ucode not available"
+	fi
+}
+
+# --------------------------------------------------------- protect-status --
+cmd_protect_status() {
+	local cgi_locked="false"
+	[ -f /www/cgi-bin/cgi-backup ] && [ ! -x /www/cgi-bin/cgi-backup ] && cgi_locked="true"
+	local clock=$(cget protect customer_lock 0)
+	local bblk=$(cget protect block_backup 1)
+	printf '{"cgi_backup_locked":%s,"customer_lock":%s,"block_backup":%s}\n' \
+		"$cgi_locked" "$([ "$clock" = "1" ] && echo true || echo false)" "$([ "$bblk" = "1" ] && echo true || echo false)"
+}
+
+# ------------------------------------------------------------------ clean --
+do_cache()     { sync; echo 3 > /proc/sys/vm/drop_caches 2>/dev/null && echo ok || echo fail; }
+do_dns()       { killall -HUP dnsmasq 2>/dev/null && echo ok || echo fail; }
+do_conntrack() { if have conntrack; then conntrack -F >/dev/null 2>&1 && echo ok || echo fail; else echo missing; fi; }
+do_logs()      { /etc/init.d/log restart >/dev/null 2>&1 && echo ok || echo fail; }
+do_luci()      { rm -rf /tmp/luci-indexcache* /tmp/luci-modulecache 2>/dev/null; echo ok; }
+
+mem_avail() { awk '/^MemAvailable:/ {print $2; f=1} END { if (!f) print 0 }' /proc/meminfo; }
+
+cmd_clean() {
+	local what="${1:-all}" before after c d t l u
+	before=$(mem_avail)
+	c=skip d=skip t=skip l=skip u=skip
+	case "$what" in
+		cache)     c=$(do_cache) ;;
+		dns)       d=$(do_dns) ;;
+		conntrack) t=$(do_conntrack) ;;
+		logs)      l=$(do_logs) ;;
+		luci)      u=$(do_luci) ;;
+		all)       c=$(do_cache); d=$(do_dns); t=$(do_conntrack); l=$(do_logs); u=$(do_luci) ;;
+		auto)
+			[ "$(cget perf clean_cache 1)" = 1 ]     && c=$(do_cache)
+			[ "$(cget perf clean_dns 1)" = 1 ]       && d=$(do_dns)
+			[ "$(cget perf clean_conntrack 0)" = 1 ] && t=$(do_conntrack)
+			[ "$(cget perf clean_logs 0)" = 1 ]      && l=$(do_logs)
+			u=$(do_luci) ;;
+		*) err "unknown target" ;;
+	esac
+	after=$(mem_avail)
+	printf '{"cache":"%s","dns":"%s","conntrack":"%s","logs":"%s","luci":"%s","mem_before_kb":%s,"mem_after_kb":%s}\n' "$c" "$d" "$t" "$l" "$u" "$before" "$after"
+}
+
+# ----------------------------------------------------------------- status --
+cmd_status() {
+	local ct ctmax
+	ct=$(cat /proc/sys/net/netfilter/nf_conntrack_count 2>/dev/null); ct=${ct:-0}
+	ctmax=$(cat /proc/sys/net/netfilter/nf_conntrack_max 2>/dev/null); ctmax=${ctmax:-0}
+	awk -v ct="$ct" -v cm="$ctmax" -v ld="$(cut -d' ' -f1 /proc/loadavg)" -v up="$(cut -d. -f1 /proc/uptime)" '
+		/^MemTotal:/ { t = $2 } /^MemFree:/ { f = $2 } /^MemAvailable:/ { a = $2 } /^Cached:/ { c = $2 }
+		END { if (!a) a = f + c; printf "{\"mem_total_kb\":%d,\"mem_free_kb\":%d,\"mem_avail_kb\":%d,\"load\":%s,\"conntrack\":%d,\"conntrack_max\":%d,\"uptime\":%d}\n", t, f, a, ld, ct, cm, up }' /proc/meminfo
+}
+
+# ----------------------------------------------------------------- wgkey --
+cmd_wgkey() {
+	have wg || err "wireguard-tools not installed"
+	local priv pub
+	priv=$(wg genkey) || err "genkey failed"
+	pub=$(printf '%s' "$priv" | wg pubkey) || err "pubkey failed"
+	printf '{"private":"%s","public":"%s"}\n' "$priv" "$pub"
+}
+
+case "$1" in
+	wgkey)             cmd_wgkey ;;
+	ping)              shift; cmd_ping "$@" ;;
+	speed)             shift; cmd_speed "$@" ;;
+	clients)           cmd_clients ;;
+	ensure)            cmd_ensure ;;
+	usage-reset)       cmd_usage_reset ;;
+	usage-ifaces)      cmd_usage_ifaces ;;
+	clients-log)       cmd_clients_log ;;
+	clients-log-clear) cmd_clients_log_clear ;;
+	txpower-set)       shift; cmd_txpower_set "$@" ;;
+	loop-status)       cmd_loop_status ;;
+	passwd)            shift; cmd_passwd "$@" ;;
+	resetbtn-status)   cmd_resetbtn_status ;;
+	reboot-now)        cmd_reboot_now ;;
+	wifi-toggle)       shift; cmd_wifi_toggle "$@" ;;
+	time-info)         cmd_time_info ;;
+	set-time)          shift; cmd_set_time "$@" ;;
+	ntp-sync)          cmd_ntp_sync ;;
+	neighbors-status)  cmd_neighbors_status ;;
+	neighbors-send)    cmd_neighbors_send ;;
+	protect-status)    cmd_protect_status ;;
+	clean)             shift; cmd_clean "$@" ;;
+	status)            cmd_status ;;
+	*)                 err "unknown command" ;;
+esac

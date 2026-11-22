@@ -1,0 +1,103 @@
+{#
+ Quick Royal theme - header
+ Based on the structure of luci-theme-bootstrap (Apache License 2.0)
+-#}
+
+{%
+	import { getuid, getspnam } from 'luci.core';
+
+	const boardinfo = ubus.call('system', 'board') ?? {};
+	const host = striptags(boardinfo.hostname ?? '?');
+	const rtl = (index(['ar', 'he', 'fa', 'ur'], dispatcher.lang) >= 0);
+
+	http.prepare_content('text/html; charset=UTF-8');
+-%}
+
+<!DOCTYPE html>
+<html lang="{{ dispatcher.lang }}" dir="{{ rtl ? 'rtl' : 'ltr' }}" data-darkmode="true" data-qs-layout="side" data-qs-shape="squircle" data-qs-icons="glass" data-qs-bg="gradient">
+	<head>
+		<meta charset="utf-8">
+		<title>{{ striptags(`${boardinfo.hostname ?? '?'}${dispatched?.title ? ` | ${_(dispatched.title)}` : ''}`) }}</title>
+		<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+		<meta name="theme-color" content="#0a0a1f">
+		<meta name="darkreader-lock">
+		<link rel="stylesheet" href="/luci-static/bootstrap/cascade.css">
+		<link rel="stylesheet" media="only screen and (max-device-width: 854px)" href="/luci-static/bootstrap/mobile.css">
+		<link rel="stylesheet" href="{{ media }}/quick.css">
+		<link rel="stylesheet" href="{{ media }}/quick-glass.css">
+		<link rel="icon" href="{{ media }}/logo_48.png" sizes="48x48">
+		<link rel="icon" href="{{ media }}/logo.svg" sizes="any">
+		{% if (dispatched?.css): %}
+		<link rel="stylesheet" href="{{ resource }}/{{ dispatched.css }}">
+		{% endif %}
+		{% if (css): %}
+		<style title="text/css">{{ css }}</style>
+		{% endif %}
+		<script src="{{ media }}/quick.js"></script>
+		<script src="{{ dispatcher.build_url('admin/translations', dispatcher.lang) }}"></script>
+		<script src="{{ resource }}/cbi.js"></script>
+	</head>
+
+	<body class="lang_{{ dispatcher.lang }} {{ blank_page ? 'qs-login' : 'qs-app' }}" data-page="{{ entityencode(join('-', length(ctx.request_path) ? ctx.request_path : ctx.path), true) }}">
+		{% if (!blank_page): %}
+		<div class="qs-backdrop" id="qs-backdrop"></div>
+		<div class="main">
+			<aside class="main-left" id="qs-side">
+				<a class="qs-brand" href="{{ dispatcher.build_url() }}">
+					<img class="qs-logo" src="{{ media }}/logo.svg" alt="" width="46" height="46">
+					<span class="qs-brand-txt">
+						<b>{{ host }}</b>
+						<small>{{ striptags(boardinfo.model ?? 'OpenWrt') }}</small>
+					</span>
+				</a>
+				<ul class="nav" id="topmenu" style="display:none"></ul>
+				<div class="qs-side-foot">
+					<a class="qs-logout" href="{{ dispatcher.build_url('admin/logout') }}" title="{{ _('Logout') }}">
+						<span class="qs-ico" data-icon="logout"></span>
+						<span class="qs-logout-txt">{{ _('Logout') }}</span>
+					</a>
+				</div>
+			</aside>
+
+			<div class="main-right">
+				<div class="qs-topbar">
+					<button type="button" class="qs-burger" id="qs-burger" aria-label="Menu"><span class="qs-ico" data-icon="menu"></span></button>
+					<nav class="qs-crumb" id="qs-crumb" aria-label="breadcrumb"></nav>
+					<div class="qs-top-actions">
+						<button type="button" class="qs-search" id="qs-search" aria-label="Search"><span class="qs-ico" data-icon="search"></span><span class="qs-search-t">Search</span><kbd>Ctrl K</kbd></button>
+						<div id="indicators" class="pull-right"></div>
+						<button type="button" class="qs-tbtn" id="qs-mode" title="Light / Dark" aria-label="Light / Dark"><span class="qs-ico" data-icon="moon"></span></button>
+						<a class="qs-tbtn" href="{{ dispatcher.build_url('admin/logout') }}" title="{{ _('Logout') }}" aria-label="{{ _('Logout') }}"><span class="qs-ico" data-icon="logout"></span></a>
+					</div>
+				</div>
+
+				<div id="maincontent" class="container">
+					{% if (getuid() == 0 && getspnam('root')?.pwdp === ''): %}
+						<div class="alert-message warning">
+							<h4>{{ _('No password set!') }}</h4>
+							<p>{{ _('There is no password set on this router. Please configure a root password to protect the web interface.') }}</p>
+							{% if (dispatcher.lookup("admin/system/admin")): %}
+							  <div class="right"><a class="btn" href="{{ dispatcher.build_url("admin/system/admin") }}">{{ _('Go to password configuration...') }}</a></div>
+							{% endif %}
+						</div>
+					{% endif %}
+
+					{% if (boardinfo.rootfs_type == "initramfs"): %}
+						<div class="alert-message warning">
+							<h4>{{ _('System running in recovery (initramfs) mode.') }}</h4>
+							<p>{{ _('No changes to settings will be stored and are lost after rebooting. This mode should only be used to install a firmware upgrade') }}</p>
+							{% if (dispatcher.lookup("admin/system/flash")): %}
+							  <div class="right"><a class="btn" href="{{ dispatcher.build_url("admin/system/flash") }}">{{ _('Go to firmware upgrade...') }}</a></div>
+							{% endif %}
+						</div>
+					{% endif %}
+
+					<noscript>
+						<div class="alert-message warning">
+							<h4>{{ _('JavaScript required!') }}</h4>
+							<p>{{ _('You must enable JavaScript in your browser or LuCI will not work properly.') }}</p>
+						</div>
+					</noscript>
+
+					<div id="tabmenu" style="display:none"></div>
+		{% endif %}
